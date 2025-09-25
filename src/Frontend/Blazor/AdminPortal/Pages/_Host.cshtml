@@ -1,0 +1,10 @@
+@page "/"
+@namespace AdminPortal.Pages
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+<!DOCTYPE html>
+<html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Admin Portal</title></head>
+<body>
+    <partial name="_LoginPartial" />
+    <app><component type="typeof(App)" render-mode="ServerPrerendered" /></app>
+    <script src="_framework/blazor.server.js"></script>
+</body></html>

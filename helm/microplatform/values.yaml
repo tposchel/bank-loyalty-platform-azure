@@ -1,0 +1,25 @@
+global:
+  imageTag: "latest"
+  tenantId: ""
+  keyVault:
+    name: ""
+  workloadIdentity:
+    enabled: true
+    clientId: ""
+
+b2c:
+  domain: ""
+  tenantId: ""
+  signinPolicy: "B2C_1_signin"
+  apiClientId: ""
+  webClientId: ""
+  webClientSecretKey: "b2c-web-client-secret"
+
+image: { registry: "myacr.azurecr.io" }
+
+components:
+  gateway: { image: bank-loyalty-gateway, replicaCount: 2, containerPort: 8080, sa: "sa-gateway" }
+  tenantmanagement: { image: bank-loyalty-tenantmanagement, replicaCount: 1, containerPort: 8080, sa: "sa-tenantmanagement" }
+  customer: { image: bank-loyalty-customer, replicaCount: 1, containerPort: 8080, sa: "sa-customer" }
+  frontend: { image: bank-loyalty-react-frontend, replicaCount: 2, containerPort: 80, sa: "sa-frontend" }
+  admin: { image: bank-loyalty-blazor-admin, replicaCount: 1, containerPort: 80, sa: "sa-admin" }

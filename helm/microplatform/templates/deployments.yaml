@@ -1,0 +1,55 @@
+{{- $g := .Values.global -}}
+{{- range $name, $comp := .Values.components }}
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: {{ $name }} }
+spec:
+  replicas: {{ $comp.replicaCount }}
+  selector: { matchLabels: { app: {{ $name }} } }
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}
+        {{- if $g.workloadIdentity.enabled }}azure.workload.identity/use: "true"{{- end }}
+    spec:
+      serviceAccountName: {{ $comp.sa }}
+      containers:
+        - name: {{ $name }}
+          image: "{{ $.Values.image.registry }}/{{ $comp.image }}:{{ $g.imageTag | default "latest" }}"
+          ports: [ { containerPort: {{ $comp.containerPort }} } ]
+          {{- if and $g.workloadIdentity.enabled $g.keyVault.name }}
+          env:
+            - name: ConnectionStrings__Sql
+              valueFrom: { secretKeyRef: { name: "{{ $name }}-kv-secrets", key: "SQL_CONNECTION_STRING" } }
+            - name: Cosmos__Endpoint
+              valueFrom: { secretKeyRef: { name: "{{ $name }}-kv-secrets", key: "COSMOS_ENDPOINT" } }
+            - name: Cosmos__Key
+              valueFrom: { secretKeyRef: { name: "{{ $name }}-kv-secrets", key: "COSMOS_PRIMARY_KEY" } }
+            - name: Redis__ConnectionString
+              valueFrom: { secretKeyRef: { name: "{{ $name }}-kv-secrets", key: "REDIS_CONNECTION_STRING" } }
+            - name: ApplicationInsights__ConnectionString
+              valueFrom: { secretKeyRef: { name: "{{ $name }}-kv-secrets", key: "APPINSIGHTS_CONNECTION_STRING" } }
+            - name: AppConfig__Endpoint
+              valueFrom: { secretKeyRef: { name: "{{ $name }}-kv-secrets", key: "APPCONFIG_ENDPOINT" } }
+            {{- if eq $name "admin" }}
+            - name: AzureAdB2C__ClientSecret
+              valueFrom: { secretKeyRef: { name: "{{ $name }}-kv-secrets", key: "B2C_WEB_CLIENT_SECRET" } }
+            {{- end }}
+          volumeMounts: [ { name: kv, mountPath: "/mnt/kv", readOnly: true } ]
+          {{- end }}
+      {{- if and $g.workloadIdentity.enabled $g.keyVault.name }}
+      volumes:
+        - name: kv
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes: { secretProviderClass: "spc-{{ $name }}" }
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata: { name: {{ $name }} }
+spec:
+  selector: { app: {{ $name }} }
+  ports: [ { port: 80, targetPort: {{ $comp.containerPort }} } ]
+{{- end }}

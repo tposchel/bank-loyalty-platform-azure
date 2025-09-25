@@ -1,0 +1,23 @@
+apiVersion: azconfig.io/v1alpha1
+kind: AzureAppConfigurationProvider
+metadata:
+  name: loyalty-config
+  namespace: appconfig-system
+spec:
+  target:
+    configMap:
+      name: app-settings
+      namespace: loyalty-dev
+  configurationStore:
+    endpoint: "<APP_CONFIGURATION_ENDPOINT>"
+  auth:
+    workloadIdentity:
+      serviceAccountRef:
+        name: appconfig-provider-sa
+        namespace: appconfig-system
+  keyValues:
+    selectors:
+      - keyFilter: /loyalty/*
+        labelFilter: dev
+  refresh:
+    interval: 60s

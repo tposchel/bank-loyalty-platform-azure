@@ -1,0 +1,259 @@
+# azure-pipelines-infra.yml
+# Terraform + Helm multi-stage deploy across dev/qa/prod with environment approvals.
+trigger:
+  branches:
+    include: [ main ]
+
+variables:
+  azureSubscription: 'AzureRM'
+  kubernetesServiceConnection: 'kubernetesServiceConnection'
+  tfStateRg: 'tfstate-rg'
+  tfStateSa: 'tfstate$ENV$acct'
+  tfStateContainer: 'tfstate'
+  tfWorkingDir: 'infrastructure/terraform'
+  helmChartPath: 'helm/microplatform'
+  releaseName: 'loyalty'
+  containerRegistry: 'myacr.azurecr.io'
+  imageTag: '$(Build.SourceVersionShort)'
+
+stages:
+- stage: Dev
+  displayName: 'Deploy DEV'
+  variables: { EnvironmentName: 'dev' }
+  jobs:
+  - deployment: tf_dev
+    displayName: 'Terraform (dev)'
+    environment: 'dev'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureCLI@2
+            displayName: 'Terraform init/plan/apply (dev)'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                ENV="$(EnvironmentName)"
+                RG="$(tfStateRg)"
+                SA="${TF_SA:-$(echo $(tfStateSa) | sed "s/\$ENV\$/${ENV}/g" | tr -cd '[:alnum:]')}"
+                CONTAINER="$(tfStateContainer)"
+                WORKDIR="$(tfWorkingDir)"
+                KEY="loyalty-${ENV}.tfstate"
+
+                az group create -n "$RG" -l eastus
+                if ! az storage account show -g "$RG" -n "$SA" &>/dev/null; then
+                  az storage account create -g "$RG" -n "$SA" -l eastus --sku Standard_LRS --encryption-services blob
+                fi
+                export AZURE_STORAGE_ACCOUNT="$SA"
+                export AZURE_STORAGE_KEY=$(az storage account keys list -g "$RG" -n "$SA" --query "[0].value" -o tsv)
+                az storage container create -n "$CONTAINER" --auth-mode key || true
+
+                cd "$WORKDIR"
+                terraform -version || (curl -fsSL https://releases.hashicorp.com/terraform/1.6.6/terraform_1.6.6_linux_amd64.zip -o tf.zip && sudo unzip -o tf.zip -d /usr/local/bin && rm tf.zip)
+                terraform init \
+                  -backend-config="storage_account_name=$SA" \
+                  -backend-config="container_name=$CONTAINER" \
+                  -backend-config="key=$KEY" \
+                  -backend-config="resource_group_name=$RG"
+
+                terraform plan -var-file="env/${ENV}.tfvars" -out="tfplan"
+                terraform apply -auto-approve tfplan
+
+  - deployment: helm_dev
+    displayName: 'Helm deploy (dev)'
+    dependsOn: tf_dev
+    environment: 'dev'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: HelmInstaller@1
+            inputs: { helmVersionToInstall: 'latest' }
+          - task: HelmDeploy@0
+            displayName: 'helm upgrade --install (dev)'
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceConnection: '$(kubernetesServiceConnection)'
+              namespace: 'loyalty-dev'
+              command: 'upgrade'
+              chartType: 'FilePath'
+              chartPath: '$(helmChartPath)'
+              releaseName: '$(releaseName)'
+              valueFile: 'pipeline/deploy/helm-values/dev.yaml'
+              arguments: >-
+                --install
+                --set image.registry=$(containerRegistry)
+                --set global.imageTag=$(imageTag)
+
+- stage: QA
+  displayName: 'Deploy QA'
+  dependsOn: Dev
+  variables: { EnvironmentName: 'qa' }
+  jobs:
+  - deployment: tf_qa
+    displayName: 'Terraform (qa)'
+    environment: 'qa'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: ManualValidation@0
+            timeoutInMinutes: 720
+            displayName: 'Approve Terraform apply (QA)'
+            inputs:
+              notifyUsers: ''
+              instructions: 'Approve to apply Terraform to QA environment.'
+          - task: AzureCLI@2
+            displayName: 'Terraform init/plan/apply (qa)'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                ENV="$(EnvironmentName)"
+                RG="$(tfStateRg)"
+                SA="${TF_SA:-$(echo $(tfStateSa) | sed "s/\$ENV\$/${ENV}/g" | tr -cd '[:alnum:]')}"
+                CONTAINER="$(tfStateContainer)"
+                WORKDIR="$(tfWorkingDir)"
+                KEY="loyalty-${ENV}.tfstate"
+
+                az group create -n "$RG" -l eastus
+                if ! az storage account show -g "$RG" -n "$SA" &>/dev/null; then
+                  az storage account create -g "$RG" -n "$SA" -l eastus --sku Standard_LRS --encryption-services blob
+                fi
+                export AZURE_STORAGE_ACCOUNT="$SA"
+                export AZURE_STORAGE_KEY=$(az storage account keys list -g "$RG" -n "$SA" --query "[0].value" -o tsv)
+                az storage container create -n "$CONTAINER" --auth-mode key || true
+
+                cd "$WORKDIR"
+                terraform -version || (curl -fsSL https://releases.hashicorp.com/terraform/1.6.6/terraform_1.6.6_linux_amd64.zip -o tf.zip && sudo unzip -o tf.zip -d /usr/local/bin && rm tf.zip)
+                terraform init \
+                  -backend-config="storage_account_name=$SA" \
+                  -backend-config="container_name=$CONTAINER" \
+                  -backend-config="key=$KEY" \
+                  -backend-config="resource_group_name=$RG"
+
+                terraform plan -var-file="env/${ENV}.tfvars" -out="tfplan"
+                terraform apply -auto-approve tfplan
+
+  - deployment: helm_qa
+    displayName: 'Helm deploy (qa)'
+    dependsOn: tf_qa
+    environment: 'qa'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: ManualValidation@0
+            timeoutInMinutes: 720
+            displayName: 'Approve Helm deploy (QA)'
+            inputs:
+              notifyUsers: ''
+              instructions: 'Approve to deploy Helm to QA.'
+          - task: HelmInstaller@1
+            inputs: { helmVersionToInstall: 'latest' }
+          - task: HelmDeploy@0
+            displayName: 'helm upgrade --install (qa)'
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceConnection: '$(kubernetesServiceConnection)'
+              namespace: 'loyalty-qa'
+              command: 'upgrade'
+              chartType: 'FilePath'
+              chartPath: '$(helmChartPath)'
+              releaseName: '$(releaseName)'
+              valueFile: 'pipeline/deploy/helm-values/qa.yaml'
+              arguments: >-
+                --install
+                --set image.registry=$(containerRegistry)
+                --set global.imageTag=$(imageTag)
+
+- stage: Prod
+  displayName: 'Deploy PROD'
+  dependsOn: QA
+  variables: { EnvironmentName: 'prod' }
+  jobs:
+  - deployment: tf_prod
+    displayName: 'Terraform (prod)'
+    environment: 'prod'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: ManualValidation@0
+            timeoutInMinutes: 1440
+            displayName: 'Approve Terraform apply (PROD)'
+            inputs:
+              notifyUsers: ''
+              instructions: 'Final approval to apply Terraform to PROD.'
+          - task: AzureCLI@2
+            displayName: 'Terraform init/plan/apply (prod)'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                ENV="$(EnvironmentName)"
+                RG="$(tfStateRg)"
+                SA="${TF_SA:-$(echo $(tfStateSa) | sed "s/\$ENV\$/${ENV}/g" | tr -cd '[:alnum:]')}"
+                CONTAINER="$(tfStateContainer)"
+                WORKDIR="$(tfWorkingDir)"
+                KEY="loyalty-${ENV}.tfstate"
+
+                az group create -n "$RG" -l eastus
+                if ! az storage account show -g "$RG" -n "$SA" &>/dev/null; then
+                  az storage account create -g "$RG" -n "$SA" -l eastus --sku Standard_LRS --encryption-services blob
+                fi
+                export AZURE_STORAGE_ACCOUNT="$SA"
+                export AZURE_STORAGE_KEY=$(az storage account keys list -g "$RG" -n "$SA" --query "[0].value" -o tsv)
+                az storage container create -n "$CONTAINER" --auth-mode key || true
+
+                cd "$WORKDIR"
+                terraform -version || (curl -fsSL https://releases.hashicorp.com/terraform/1.6.6/terraform_1.6.6_linux_amd64.zip -o tf.zip && sudo unzip -o tf.zip -d /usr/local/bin && rm tf.zip)
+                terraform init \
+                  -backend-config="storage_account_name=$SA" \
+                  -backend-config="container_name=$CONTAINER" \
+                  -backend-config="key=$KEY" \
+                  -backend-config="resource_group_name=$RG"
+
+                terraform plan -var-file="env/${ENV}.tfvars" -out="tfplan"
+                terraform apply -auto-approve tfplan
+
+  - deployment: helm_prod
+    displayName: 'Helm deploy (prod)'
+    dependsOn: tf_prod
+    environment: 'prod'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: ManualValidation@0
+            timeoutInMinutes: 1440
+            displayName: 'Approve Helm deploy (PROD)'
+            inputs:
+              notifyUsers: ''
+              instructions: 'Final approval to deploy Helm to PROD.'
+          - task: HelmInstaller@1
+            inputs: { helmVersionToInstall: 'latest' }
+          - task: HelmDeploy@0
+            displayName: 'helm upgrade --install (prod)'
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceConnection: '$(kubernetesServiceConnection)'
+              namespace: 'loyalty-prod'
+              command: 'upgrade'
+              chartType: 'FilePath'
+              chartPath: '$(helmChartPath)'
+              releaseName: '$(releaseName)'
+              valueFile: 'pipeline/deploy/helm-values/prod.yaml'
+              arguments: >-
+                --install
+                --atomic
+                --timeout 10m
+                --set image.registry=$(containerRegistry)
+                --set global.imageTag=$(imageTag)

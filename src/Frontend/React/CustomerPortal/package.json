@@ -1,0 +1,8 @@
+{
+  "name": "bank-loyalty-customer-portal",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": { "dev": "vite", "build": "vite build", "preview": "vite preview" },
+  "devDependencies": { "@vitejs/plugin-react": "^4.2.1", "vite": "^5.4.0", "typescript": "^5.4.0" },
+  "dependencies": { "react": "^18.3.1", "react-dom": "^18.3.1", "@azure/msal-browser": "^3.20.0", "@azure/msal-react": "^2.0.16" }
+}

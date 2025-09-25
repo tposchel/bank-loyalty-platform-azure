@@ -1,0 +1,11 @@
+bin/
+obj/
+out/
+dist/
+node_modules/
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+.DS_Store
+.env*

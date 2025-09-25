@@ -1,0 +1,12 @@
+prefix        = "loyalty"
+environment   = "prod"
+location      = "eastus"
+kube_namespace = "loyalty-prod"
+sql_admin_login    = "sqladminuser"
+sql_admin_password = "ChangeMe_1234!"
+b2c_tenant_id = "00000000-0000-0000-0000-000000000000"
+b2c_domain    = "contosob2c.onmicrosoft.com"
+image_registry = "myacr.azurecr.io"
+apim_api_names = ["loyalty-gateway", "tenants-api", "rewards-api"]
+audience_source   = "key_vault"
+audience_secret_name = "b2c-api-client-id"

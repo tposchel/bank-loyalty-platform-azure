@@ -1,0 +1,12 @@
+@using Microsoft.AspNetCore.Authentication
+@using Microsoft.AspNetCore.Authentication.OpenIdConnect
+@inject Microsoft.AspNetCore.Http.IHttpContextAccessor HttpContextAccessor
+@if (HttpContextAccessor.HttpContext?.User?.Identity?.IsAuthenticated ?? false) {
+  <form method="post" asp-area="MicrosoftIdentity" asp-controller="Account" asp-action="SignOut">
+    <button type="submit">Sign out</button>
+  </form>
+} else {
+  <form method="get" asp-area="MicrosoftIdentity" asp-controller="Account" asp-action="SignIn">
+    <button type="submit">Sign in</button>
+  </form>
+}
