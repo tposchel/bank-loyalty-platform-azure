@@ -1,0 +1,193 @@
+# ============================================
+# Observability & Service Bus Integration
+# Merge with existing values.yaml or use as values-enhancements.yaml
+# ============================================
+
+# Application Insights / OpenTelemetry
+observability:
+  enabled: true
+  applicationInsights:
+    enabled: true
+    # Connection string from Key Vault CSI
+    connectionStringSecretName: appinsights-connection-string
+  
+  # OpenTelemetry configuration (for richer tracing)
+  openTelemetry:
+    enabled: true
+    endpoint: ""  # Set if using custom OTLP endpoint
+    serviceName: "{{ .Release.Name }}"
+    
+  # Logging configuration
+  logging:
+    level: Information
+    # Structured logging with correlation
+    includeScopes: true
+    # Export to Application Insights
+    applicationInsights:
+      enabled: true
+      trackExceptionsAsExceptions: true
+
+# Service Bus integration
+serviceBus:
+  enabled: true
+  # Namespace from App Configuration
+  namespaceConfigKey: "ServiceBus:Namespace"
+  
+  # Queue configurations
+  queues:
+    pointAccruals:
+      name: point-accruals
+      maxConcurrentCalls: 10
+      prefetchCount: 20
+      autoComplete: false
+    
+    pointRedemptions:
+      name: point-redemptions
+      maxConcurrentCalls: 5
+      prefetchCount: 10
+      autoComplete: false
+      # Session-enabled for FIFO per customer
+      requiresSession: true
+    
+    tierCalculations:
+      name: tier-calculations
+      maxConcurrentCalls: 3
+      prefetchCount: 5
+      autoComplete: false
+
+  # Topic subscriptions
+  topics:
+    loyaltyEvents:
+      name: loyalty-events
+      subscriptions:
+        - name: notifications
+          maxConcurrentCalls: 10
+        - name: analytics
+          maxConcurrentCalls: 5
+
+# Health checks
+healthChecks:
+  enabled: true
+  endpoints:
+    liveness:
+      path: /health/live
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      failureThreshold: 3
+    
+    readiness:
+      path: /health/ready
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      failureThreshold: 3
+    
+    startup:
+      path: /health/startup
+      initialDelaySeconds: 0
+      periodSeconds: 5
+      failureThreshold: 30
+  
+  # Include dependency checks
+  dependencies:
+    sql: true
+    cosmos: true
+    redis: true
+    serviceBus: true
+    keyVault: true
+
+# Distributed tracing
+tracing:
+  enabled: true
+  samplingRatio: 1.0  # 100% in dev, reduce in prod
+  # W3C Trace Context propagation
+  propagators:
+    - tracecontext
+    - baggage
+  
+  # Custom spans for loyalty operations
+  customSpans:
+    - name: "PointAccrual"
+      attributes:
+        - customerId
+        - points
+        - transactionId
+    - name: "PointRedemption"
+      attributes:
+        - customerId
+        - points
+        - rewardId
+    - name: "TierCalculation"
+      attributes:
+        - customerId
+        - previousTier
+        - newTier
+
+# Metrics
+metrics:
+  enabled: true
+  prometheus:
+    enabled: true
+    port: 9090
+    path: /metrics
+  
+  # Custom metrics for loyalty platform
+  custom:
+    - name: loyalty_points_accrued_total
+      type: counter
+      description: "Total points accrued"
+      labels:
+        - customer_tier
+        - transaction_type
+    
+    - name: loyalty_points_redeemed_total
+      type: counter
+      description: "Total points redeemed"
+      labels:
+        - customer_tier
+        - reward_type
+    
+    - name: loyalty_tier_changes_total
+      type: counter
+      description: "Total tier changes"
+      labels:
+        - direction  # upgrade/downgrade
+        - from_tier
+        - to_tier
+    
+    - name: loyalty_redemption_duration_seconds
+      type: histogram
+      description: "Redemption processing time"
+      buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
+
+# Pod annotations for Application Insights
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9090"
+  prometheus.io/path: "/metrics"
+
+# Resource configurations with observability overhead
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Autoscaling based on Service Bus queue depth
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    # KEDA scaler for Service Bus (requires KEDA installed)
+    - type: External
+      external:
+        metricName: queueLength
+        targetAverageValue: "5"

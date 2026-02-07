@@ -1,0 +1,134 @@
+// ============================================
+// Example Program.cs showing integration
+// Merge with your existing Program.cs
+// ============================================
+
+using Azure.Identity;
+using LoyaltyPlatform.Extensions;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using System.Text.Json;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// ============================================
+// Configuration
+// ============================================
+
+// Add Azure App Configuration with Key Vault references
+builder.Configuration.AddAzureAppConfiguration(options =>
+{
+    var endpoint = builder.Configuration["AppConfiguration:Endpoint"];
+    options.Connect(new Uri(endpoint!), new DefaultAzureCredential())
+        .ConfigureKeyVault(kv =>
+        {
+            kv.SetCredential(new DefaultAzureCredential());
+        })
+        .ConfigureRefresh(refresh =>
+        {
+            refresh.Register("Settings:Sentinel", refreshAll: true)
+                .SetCacheExpiration(TimeSpan.FromMinutes(5));
+        })
+        .UseFeatureFlags(ff =>
+        {
+            ff.CacheExpirationInterval = TimeSpan.FromMinutes(5);
+        });
+});
+
+// ============================================
+// Services
+// ============================================
+
+// Add observability (Application Insights + OpenTelemetry + Health Checks)
+builder.Services.AddLoyaltyObservability(builder.Configuration, builder.Environment);
+
+// Add Service Bus for async operations
+builder.Services.AddLoyaltyServiceBus(builder.Configuration);
+
+// Add Azure App Configuration middleware
+builder.Services.AddAzureAppConfiguration();
+
+// Add authentication (B2C)
+builder.Services.AddAuthentication()
+    .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAdB2C"));
+
+builder.Services.AddAuthorization();
+
+// Add your existing services...
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+// HTTP context accessor for telemetry
+builder.Services.AddHttpContextAccessor();
+
+var app = builder.Build();
+
+// ============================================
+// Middleware Pipeline
+// ============================================
+
+// Azure App Configuration refresh
+app.UseAzureAppConfiguration();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+// Health check endpoints
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = _ => false, // No dependency checks for liveness
+    ResponseWriter = WriteHealthResponse
+});
+
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+    ResponseWriter = WriteHealthResponse
+});
+
+app.MapHealthChecks("/health/startup", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+    ResponseWriter = WriteHealthResponse
+});
+
+// Prometheus metrics endpoint (if enabled)
+app.MapPrometheusScrapingEndpoint("/metrics");
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapControllers();
+
+app.Run();
+
+// Health check response writer
+static Task WriteHealthResponse(HttpContext context, HealthReport report)
+{
+    context.Response.ContentType = "application/json";
+    
+    var response = new
+    {
+        status = report.Status.ToString(),
+        totalDuration = report.TotalDuration.TotalMilliseconds,
+        checks = report.Entries.Select(e => new
+        {
+            name = e.Key,
+            status = e.Value.Status.ToString(),
+            duration = e.Value.Duration.TotalMilliseconds,
+            description = e.Value.Description,
+            exception = e.Value.Exception?.Message,
+            data = e.Value.Data
+        })
+    };
+
+    return context.Response.WriteAsync(JsonSerializer.Serialize(response, new JsonSerializerOptions
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true
+    }));
+}

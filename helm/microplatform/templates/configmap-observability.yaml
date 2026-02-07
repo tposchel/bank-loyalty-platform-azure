@@ -1,0 +1,101 @@
+{{- if .Values.observability.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "microplatform.fullname" . }}-observability
+  labels:
+    {{- include "microplatform.labels" . | nindent 4 }}
+data:
+  appsettings.Observability.json: |
+    {
+      "ApplicationInsights": {
+        "EnableAdaptiveSampling": {{ if eq .Values.global.environment "prod" }}true{{ else }}false{{ end }},
+        "EnablePerformanceCounterCollectionModule": true,
+        "EnableEventCounterCollectionModule": true,
+        "EnableDependencyTrackingTelemetryModule": true,
+        "EnableRequestTrackingTelemetryModule": true
+      },
+      "Logging": {
+        "LogLevel": {
+          "Default": "{{ .Values.observability.logging.level }}",
+          "Microsoft": "Warning",
+          "Microsoft.Hosting.Lifetime": "Information",
+          "Azure.Messaging.ServiceBus": "Warning",
+          "Azure.Core": "Warning"
+        },
+        "ApplicationInsights": {
+          "LogLevel": {
+            "Default": "{{ .Values.observability.logging.level }}"
+          }
+        }
+      },
+      "OpenTelemetry": {
+        "ServiceName": "{{ .Release.Name }}",
+        "ServiceVersion": "{{ .Chart.AppVersion }}",
+        "Tracing": {
+          "SamplingRatio": {{ .Values.tracing.samplingRatio }},
+          "Sources": [
+            "Azure.Messaging.ServiceBus",
+            "Microsoft.EntityFrameworkCore",
+            "Npgsql",
+            "StackExchange.Redis"
+          ]
+        },
+        "Metrics": {
+          "Exporters": {
+            "Prometheus": {
+              "Enabled": {{ .Values.metrics.prometheus.enabled }},
+              "Port": {{ .Values.metrics.prometheus.port }}
+            }
+          }
+        }
+      },
+      "HealthChecks": {
+        "Endpoints": {
+          "Live": "{{ .Values.healthChecks.endpoints.liveness.path }}",
+          "Ready": "{{ .Values.healthChecks.endpoints.readiness.path }}",
+          "Startup": "{{ .Values.healthChecks.endpoints.startup.path }}"
+        },
+        "Dependencies": {
+          "Sql": {{ .Values.healthChecks.dependencies.sql }},
+          "Cosmos": {{ .Values.healthChecks.dependencies.cosmos }},
+          "Redis": {{ .Values.healthChecks.dependencies.redis }},
+          "ServiceBus": {{ .Values.healthChecks.dependencies.serviceBus }},
+          "KeyVault": {{ .Values.healthChecks.dependencies.keyVault }}
+        }
+      }
+    }
+  
+  appsettings.ServiceBus.json: |
+    {
+      "ServiceBus": {
+        "FullyQualifiedNamespace": "",
+        "Queues": {
+          "PointAccruals": {
+            "QueueName": "{{ .Values.serviceBus.queues.pointAccruals.name }}",
+            "MaxConcurrentCalls": {{ .Values.serviceBus.queues.pointAccruals.maxConcurrentCalls }},
+            "PrefetchCount": {{ .Values.serviceBus.queues.pointAccruals.prefetchCount }},
+            "AutoCompleteMessages": {{ .Values.serviceBus.queues.pointAccruals.autoComplete }}
+          },
+          "PointRedemptions": {
+            "QueueName": "{{ .Values.serviceBus.queues.pointRedemptions.name }}",
+            "MaxConcurrentCalls": {{ .Values.serviceBus.queues.pointRedemptions.maxConcurrentCalls }},
+            "PrefetchCount": {{ .Values.serviceBus.queues.pointRedemptions.prefetchCount }},
+            "AutoCompleteMessages": {{ .Values.serviceBus.queues.pointRedemptions.autoComplete }},
+            "RequiresSession": {{ .Values.serviceBus.queues.pointRedemptions.requiresSession }}
+          },
+          "TierCalculations": {
+            "QueueName": "{{ .Values.serviceBus.queues.tierCalculations.name }}",
+            "MaxConcurrentCalls": {{ .Values.serviceBus.queues.tierCalculations.maxConcurrentCalls }},
+            "PrefetchCount": {{ .Values.serviceBus.queues.tierCalculations.prefetchCount }},
+            "AutoCompleteMessages": {{ .Values.serviceBus.queues.tierCalculations.autoComplete }}
+          }
+        },
+        "Topics": {
+          "LoyaltyEvents": {
+            "TopicName": "{{ .Values.serviceBus.topics.loyaltyEvents.name }}"
+          }
+        }
+      }
+    }
+{{- end }}
